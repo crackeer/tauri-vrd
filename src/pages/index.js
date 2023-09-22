@@ -1,5 +1,5 @@
 import React from 'react';
-import { Button, Table, Modal, List, Input, Message, Progress, Divider, Radio } from '@arco-design/web-react';
+import { Button, Table, Modal, List, Input, Message, Progress, Divider, Radio, Form } from '@arco-design/web-react';
 import { open } from '@tauri-apps/api/dialog';
 import cache from '@/util/cache';
 import invoke from '@/util/invoke'
@@ -12,13 +12,14 @@ import { open as ShellOpen } from '@tauri-apps/api/shell';
 const Row = Grid.Row;
 const Col = Grid.Col;
 const RadioGroup = Radio.Group;
-
+const FormItem = Form.Item;
 class App extends React.Component {
     timer = null
     constructor(props) {
         super(props);
         this.state = {
-            visible: false,
+            dataType: 'vr_link',
+            vrData: '',
             saveName: "",
             workJSON: "",
             vrURL: "",
@@ -30,23 +31,6 @@ class App extends React.Component {
     async componentDidMount() {
         this.getVRFiles()
         this.queryTaskState()
-        this.ifDownloadNew()
-    }
-    ifDownloadNew = async () => {
-        let vrCode = common.getQuery('vr_code', '')
-        if (vrCode.length < 1) {
-            return
-        }
-        let result = await api.getWorkJSON(vrCode)
-        if (result.code != 0) {
-            Message.error(result.status)
-            return
-        }
-        await this.setState({
-            visible: true,
-            saveName: vrCode,
-            workJSON: JSON.stringify(result.data),
-        })
     }
     getVRFiles = async () => {
         let files = await cache.getVRFiles()
@@ -56,17 +40,7 @@ class App extends React.Component {
             saveDir: dir,
         })
     }
-    htmlTitle = () => {
-        return <h3><Space>
-            VR下载
-            <Button onClick={this.addTask} type="primary" size="mini">新建VR下载任务</Button>
-        </Space></h3>
-    }
-    addTask = async () => {
-        this.setState({
-            visible: true,
-        })
-    }
+
     selectDirectory = async () => {
         let selected = await open({
             directory: true,
@@ -101,18 +75,29 @@ class App extends React.Component {
             Message.error('Please input download name')
             return
         }
-        if (this.state.workJSON.length < 1) {
-            Message.error('Please input work JSON')
-            return
+        var workJSON = this.state.vrData
+        if (this.state.dataType == 'vr_link') {
+            if (this.state.vrData.length < 1) {
+                Message.error('请输入VR链接')
+                return
+            }
+            let result = await work.getWorkJSONByURL(this.state.vrData)
+            if (result == null) {
+                Message.error('解析work.json失败')
+                return
+            }
+            workJSON = JSON.stringify(result)
         }
-        const {join} = await import('@tauri-apps/api/path');
+
+
+        const { join } = await import('@tauri-apps/api/path');
         let realPath = await join(this.state.saveDir, this.state.saveName);
         let dd = await invoke.fileExists(realPath)
-        if(dd) {
+        if (dd) {
             Message.info('该VR已下载，或者已在下载列表,请换')
             return
         }
-        let data = await invoke.addDownloadWorkTask(realPath, this.state.workJSON)
+        let data = await invoke.addDownloadWorkTask(realPath, workJSON)
         if (data.state == "failure") {
             Message.error(data.message)
             return
@@ -120,9 +105,8 @@ class App extends React.Component {
         await cache.addVRFiles([realPath])
         await this.getVRFiles()
         this.setState({
-            visible: false,
             saveName: '',
-            workJSON: ''
+            vrData: ''
         })
     }
     queryTaskState = async () => {
@@ -136,74 +120,61 @@ class App extends React.Component {
     previewVR = async (file) => {
         await ShellOpen(file + '/preview/index.html')
     }
-    parseWorkJSON = async () => {
-        if (this.state.vrURL.length < 1) {
-            Message.error('请输入VR链接')
-            return
-        }
-        //let data = await invoke.parseJSCode(this.state.vrURL)
-        // console.log(JSON.stringify(data))
-        let workJSON = await work.getWorkJSONByURL(this.state.vrURL)
-        if(workJSON == null) {
-            Message.error('解析work.json失败')
-            return
-        }
-        let htmlTitle = await invoke.parseHTMLTitle(this.state.vrURL)
-        await this.setState({
-            workJSON: JSON.stringify(workJSON),
-            saveName : htmlTitle
-        })
-    }
 
     render() {
         return (
-            <div class="app" style={{ margin: '10px auto', width: '88%' }}>
-                <List dataSource={this.state.files} size={'small'} render={(item, index) => {
-                    return <List.Item key={index} actions={[
-                        <span className='list-demo-actions-icon' onClick={() => {
-                            this.previewVR(item.file);
-                        }}>
-                            VR预览
-                        </span>,
-                        <span className='list-demo-actions-icon' onClick={() => {
-                            this.toDelete(item);
-                        }}>
-                            删除记录
-                        </span>
-                    ]} >
-                        <List.Item.Meta
-                            avatar={<Avatar shape='square'>VR</Avatar>}
-                            title={<Link href={null} onClick={() => this.openVRDir(item)}>{item.file}</Link>}
-                            description={this.state.runningTask[item.file] != undefined ? <>
-                                <TaskState data={this.state.runningTask[item.file]} />
-                            </> : null}
-                        />
-                    </List.Item>
-                }} />
-                <Modal
-                    title='新建下载VR任务'
-                    visible={this.state.visible}
-                    onCancel={() => {
-                        this.setState({ visible: false })
-                    }}
-                    style={{ width: '65%' }}
-                    onOk={this.addDownloadTask}
-                >
-                    <p><strong>下载目录:</strong></p>
-                    <Input.Search value={this.state.saveDir} onChange={(val) => { this.setState({ saveDir: val }) }} searchButton={
-                        "选择目录"
-                    } defaultValue={this.state.saveDir} placeholder='请选择目录' onSearch={this.selectDirectory} />
-
-                    <Card style={{marginTop:'10px'}} title="输入URL获取work.json" size='small'>
-                        <Input.Search value={this.state.vrURL} onChange={(val) => { this.setState({ vrURL: val }) }} searchButton={
-                            "解析"
-                        } defaultValue={this.state.vrURL} placeholder='请输入vr链接' onSearch={this.parseWorkJSON} />
-                    </Card>
-                    <p><strong>VR名称:</strong></p>
-                    <Input value={this.state.saveName} onChange={(val) => { this.setState({ saveName: val }) }} />
-                    <p><strong>work.json:</strong></p>
-                    <Input.TextArea value={this.state.workJSON} onChange={(val) => { this.setState({ workJSON: val }) }} rows={6}></Input.TextArea>
-                </Modal>
+            <div >
+                <Card title={<h3>VR下载</h3>} style={{ width: '70%', margin: '10px auto', }} >
+                    <Form>
+                        <FormItem label="数据类型">
+                            <RadioGroup defaultValue={this.state.dataType} onChange={(val) => {
+                                this.setState({ dataType: val });
+                            }}>
+                                <Radio value='vr_link'>VR链接</Radio>
+                                <Radio value='vr_data'>VR数据</Radio>
+                            </RadioGroup>
+                        </FormItem>
+                        <FormItem label={this.state.dataType == 'vr_link' ? 'VR链接' : 'VR数据'}>
+                            <Input.TextArea value={this.state.vrData} onChange={(val) => { this.setState({ vrData: val }) }} rows={3}></Input.TextArea>
+                        </FormItem>
+                        <FormItem label="名称">
+                            <Input value={this.state.saveName} onChange={(val) => { this.setState({ saveName: val }) }} />
+                        </FormItem>
+                        <FormItem label="下载到">
+                            <Input.Search value={this.state.saveDir} onChange={(val) => { this.setState({ saveDir: val }) }} searchButton={
+                                "选择目录"
+                            } defaultValue={this.state.saveDir} placeholder='请选择目录' onSearch={this.selectDirectory} />
+                        </FormItem>
+                        <FormItem wrapperCol={{ offset: 5 }}>
+                            <Button type="primary" onClick={this.addDownloadTask}>确认下载</Button>
+                        </FormItem>
+                    </Form>
+                </Card>
+                <div style={{ width: '70%', margin: '10px auto', }} >
+                    <h1>下载记录</h1>
+                    <List dataSource={this.state.files} size={'small'} render={(item, index) => {
+                        return <List.Item key={index} actions={[
+                            <span className='list-demo-actions-icon' onClick={() => {
+                                this.previewVR(item.file);
+                            }}>
+                                VR预览
+                            </span>,
+                            <span className='list-demo-actions-icon' onClick={() => {
+                                this.toDelete(item);
+                            }}>
+                                删除记录
+                            </span>
+                        ]} >
+                            <List.Item.Meta
+                                avatar={<Avatar shape='square'>VR</Avatar>}
+                                title={<Link href={null} onClick={() => this.openVRDir(item)}>{item.file}</Link>}
+                                description={this.state.runningTask[item.file] != undefined ? <>
+                                    <TaskState data={this.state.runningTask[item.file]} />
+                                </> : null}
+                            />
+                        </List.Item>
+                    }} />
+                </div>
             </div>
         )
     }
