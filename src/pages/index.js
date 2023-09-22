@@ -3,16 +3,19 @@ import { Button, Table, Modal, List, Input, Message, Progress, Divider, Radio, F
 import { open } from '@tauri-apps/api/dialog';
 import cache from '@/util/cache';
 import invoke from '@/util/invoke'
-import common from '@/util/common'
 import work from '@/util/work'
-import api from '@/util/api'
-import { IconFolder, IconDelete, IconLoading } from '@arco-design/web-react/icon';
+import dayjs from 'dayjs';
 import { Card, Avatar, Link, Typography, Space, Grid } from '@arco-design/web-react';
 import { open as ShellOpen } from '@tauri-apps/api/shell';
 const Row = Grid.Row;
 const Col = Grid.Col;
 const RadioGroup = Radio.Group;
 const FormItem = Form.Item;
+
+
+const VRFile = 'vr_file'
+const VRFileDirectory = 'vr_file_directory'
+
 class App extends React.Component {
     timer = null
     constructor(props) {
@@ -22,9 +25,8 @@ class App extends React.Component {
             vrData: '',
             saveName: "",
             workJSON: "",
-            vrURL: "",
             saveDir: "",
-            files: [],
+            vrList: [],
             runningTask: {},
         }
     }
@@ -33,10 +35,11 @@ class App extends React.Component {
         this.queryTaskState()
     }
     getVRFiles = async () => {
-        let files = await cache.getVRFiles()
-        let dir = await cache.getVRDir()
+        let files = await cache.getJSON(VRFile) || []
+        console.log(files)
+        let dir = await cache.getText(VRFileDirectory)
         this.setState({
-            files: files,
+            vrList: files,
             saveDir: dir,
         })
     }
@@ -53,26 +56,27 @@ class App extends React.Component {
         if (selected == null) {
             return
         }
-        await cache.setVRDir(selected)
+        await cache.setText(VRFileDirectory, selected)
         this.getVRFiles()
     }
 
     toDelete = async (item) => {
-        let list = await cache.deleteVRFiles([item.file])
-        this.setState({
-            files: list
+        this.state.vrList = this.state.vrList.filter((d) => {
+            return item.directory != d.directory
         })
+        cache.setJSON(VRFile, this.state.vrList)
+        this.getVRFiles()
     }
     openVRDir = async (item) => {
-        await ShellOpen(item.file)
+        await ShellOpen(item.directory)
     }
     addDownloadTask = async () => {
         if (this.state.saveDir.length < 1) {
-            Message.error('Please select download directory')
+            Message.error('请选择下载目录')
             return
         }
         if (this.state.saveName.length < 1) {
-            Message.error('Please input download name')
+            Message.error('请输入VR名字')
             return
         }
         var workJSON = this.state.vrData
@@ -91,18 +95,27 @@ class App extends React.Component {
 
 
         const { join } = await import('@tauri-apps/api/path');
-        let realPath = await join(this.state.saveDir, this.state.saveName);
+        let realPath = await join(this.state.saveDir, dayjs().format('YYYY-MM-DD-HH-mm-ss'));
         let dd = await invoke.fileExists(realPath)
         if (dd) {
             Message.info('该VR已下载，或者已在下载列表,请换')
             return
         }
+        
         let data = await invoke.addDownloadWorkTask(realPath, workJSON)
         if (data.state == "failure") {
             Message.error(data.message)
             return
         }
-        await cache.addVRFiles([realPath])
+
+        let tmpList = JSON.parse(JSON.stringify(this.state.vrList));
+        tmpList.unshift({
+            'name': this.state.saveName,
+            'directory': realPath,
+            'time': dayjs().format('YYYY-MM-DD HH:mm:ss')
+        })
+        console.log(tmpList)
+        await cache.setJSON(VRFile, tmpList)
         await this.getVRFiles()
         this.setState({
             saveName: '',
@@ -152,10 +165,10 @@ class App extends React.Component {
                 </Card>
                 <div style={{ width: '70%', margin: '10px auto', }} >
                     <h1>下载记录</h1>
-                    <List dataSource={this.state.files} size={'small'} render={(item, index) => {
+                    <List dataSource={this.state.vrList} size={'small'} render={(item, index) => {
                         return <List.Item key={index} actions={[
                             <span className='list-demo-actions-icon' onClick={() => {
-                                this.previewVR(item.file);
+                                this.previewVR(item.directory);
                             }}>
                                 VR预览
                             </span>,
@@ -167,10 +180,16 @@ class App extends React.Component {
                         ]} >
                             <List.Item.Meta
                                 avatar={<Avatar shape='square'>VR</Avatar>}
-                                title={<Link href={null} onClick={() => this.openVRDir(item)}>{item.file}</Link>}
-                                description={this.state.runningTask[item.file] != undefined ? <>
-                                    <TaskState data={this.state.runningTask[item.file]} />
-                                </> : null}
+                                title={<strong>{item.name}</strong>}
+                                description={<>
+                                    <Link href={null} onClick={() => this.openVRDir(item)}>{item.directory}</Link>
+                                    {
+                                        this.state.runningTask[item.directory] != undefined ? <>
+                                            <TaskState data={this.state.runningTask[item.directory]} />
+                                        </> : null
+                                    }
+                                </>
+                                }
                             />
                         </List.Item>
                     }} />
